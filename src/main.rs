@@ -6,6 +6,7 @@ use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowTextLeng
 use winapi::um::winnt::WCHAR;
 use winapi::um::winuser::{GetAsyncKeyState, VK_OEM_PLUS, VK_CONTROL, VK_SHIFT};
 use willhook::keyboard_hook;
+use chrono::prelude::*;
 use std::sync::{Arc, atomic::{Ordering, AtomicBool}};
 
 fn main() {
@@ -42,17 +43,21 @@ fn main() {
                     willhook::InputEvent::Keyboard(ke) => {
                         if let Some(key) = ke.key {
                             if title != last_title {
-                                println!("{} : {:?}",title, key);
+                                let local_now: DateTime<Local> = Local::now();
+                                let local_time_string = local_now.format("%Y-%m-%d %H:%M:%S").to_string();
+                                println!("{} : {} : {:?}",local_time_string,title, key);
                                 last_title = title.clone();
                             }
                             else {
-                                println!("{} : {:?}",last_title, key);
+                                let local_now: DateTime<Local> = Local::now();
+                                let local_time_string = local_now.format("%Y-%m-%d %H:%M:%S").to_string();
+                                println!("{} : {} : {:?}",local_time_string,last_title, key);
                             }
                         } else {
-                            println!("Input event: {:?}", ie);
+                            println!("Unknown Input event: {:?}", ie);
                         }
                     }
-                    _ => println!("Input event: {:?}", ie),
+                    _ => println!("Unknown Input event: {:?}", ie),
                 }
             }
 
