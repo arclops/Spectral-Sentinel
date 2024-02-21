@@ -150,18 +150,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keylog"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "crates",
- "crossterm",
- "ctrlc",
- "willhook",
- "winapi",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.153"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -314,6 +302,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6ecd384b10a64542d77071bd64bd7b231f4ed5940fba55e98c3de13824cf3d7"
 
 [[package]]
+name = "spectra"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crates",
+ "crossterm",
+ "ctrlc",
+ "willhook",
+ "winapi",
+ "windows",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -421,6 +422,16 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "windows"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
+dependencies = [
+ "windows-core",
+ "windows-targets 0.52.0",
+]
 
 [[package]]
 name = "windows-core"

