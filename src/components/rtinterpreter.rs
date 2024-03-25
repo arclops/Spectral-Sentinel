@@ -6,117 +6,6 @@ use tinyfiledialogs::open_file_dialog;
 use willhook::KeyboardKey;
 use crossterm::{execute, style::{Print, SetForegroundColor, Color, ResetColor}};
 
-pub fn start_rtinterpreter() -> (mpsc::Sender<KeyboardKey>, mpsc::Sender<bool>) {
-    let (keysender, keyreceiver) = mpsc::channel();
-    let (wordsender, wordreceiver) = mpsc::channel();
-    let (shutdown, gsd_receiver) = mpsc::channel();
-    let (buf1sd_sender, buf1sd_receiver) = mpsc::channel();
-    let (buf2sd_sender, buf2sd_receiver) = mpsc::channel();
-    let keymap = init_keymapper(); // Modified keymapper function
-    let buffer1 = Arc::new(Mutex::new(Vec::new()));
-    let buffer2 = Arc::new(Mutex::new(Vec::new()));
-
-    // Clone Arcs for threads
-    let buffer1_clone = Arc::clone(&buffer1);
-    let buffer2_clone = Arc::clone(&buffer2);
-
-    //Spawning buffer1 and buffer2 threads
-    let _buffer1_thread = thread::spawn(move || {
-        init_buffer1(keyreceiver, wordsender, buf1sd_receiver, buffer1_clone, &keymap);
-    });
-    let _buffer2_thread = thread::spawn(move || {
-        init_buffer2(wordreceiver, buf2sd_receiver, buffer2_clone);
-    });
-    //Spawn the Shutdown Thread
-    let _shutdown_thread = thread::spawn(move || {
-        rtinterpreter_shutdown(gsd_receiver, buf1sd_sender, buf2sd_sender);
-    });
-
-    (keysender, shutdown)
-}
-
-fn init_buffer1(
-    keyreceiver: mpsc::Receiver<KeyboardKey>,
-    wordsender: mpsc::Sender<String>,
-    shutdown: mpsc::Receiver<bool>,
-    buffer1: Arc<Mutex<Vec<String>>>,
-    keymap: &HashMap<KeyboardKey, &'static str>,
-) {
-    let mut buffer1_guard = buffer1.lock().unwrap(); // Acquire lock once
-
-    loop {
-        match keyreceiver.try_recv() {
-            Ok(key) => {
-                match key {
-                    KeyboardKey::Space | KeyboardKey::Period | KeyboardKey::Comma | KeyboardKey::Enter=> {
-                        if !buffer1_guard.is_empty() {
-                            if let Some(&key_str) = keymap.get(&key) {
-                                if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
-                                    eprintln!("Failed to print: {}", e);
-                                }
-                            }
-                            wordsender.send(buffer1_guard.drain(..).collect()).unwrap();
-                        }
-                    }
-                    _ => {
-                        if let Some(&key_str) = keymap.get(&key) {
-                            if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
-                                eprintln!("Failed to print: {}", e);
-                            }
-                            buffer1_guard.push(key_str.to_string());
-                        }
-                    }
-                }
-            }
-            // Err(TryRecvError::Empty) => {println!("No message available")}, // No message available, continue loop
-            // Err(TryRecvError::Disconnected) => println!("Channel disconnected"), // Channel disconnected, exit loop
-            Err(_) => continue,
-        }
-
-        if shutdown.try_recv() == Ok(true) {
-            println!("Buffer1 shutdown signal received");
-            break;
-        }
-    }
-}
-
-
-
-fn init_buffer2(
-    wordreceiver: mpsc::Receiver<String>,
-    shutdown: mpsc::Receiver<bool>,
-    buffer2: Arc<Mutex<Vec<String>>>,
-) {
-    let rwords = rwords_gen();
-    loop {
-        match wordreceiver.recv() {
-            Ok(word) => {
-                let mut buffer2_guard = buffer2.lock().unwrap();
-                buffer2_guard.push(word.to_string());
-                for rword in rwords.iter().filter(|&rword| word.contains(rword)) {
-                    if let Err(_e) = execute!(
-                        std::io::stdout(),
-                        SetForegroundColor(Color::Red),
-                        Print(format!("\nRestricted word found: {}", rword)),
-                        ResetColor,
-                    ) {
-                        continue;
-                    }
-                    println!();
-                }
-            }
-            Err(_) => println!("Error receiving word"), // Channel disconnected, exit loop
-        }
-
-        match shutdown.try_recv() {
-            Ok(true) => {
-                break;
-            }
-            Ok(false) | Err(_) => continue,
-        }
-    }
-}
-
 fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     let mut map = std::collections::HashMap::new();
     map.insert(KeyboardKey::A, "a");
@@ -199,6 +88,124 @@ fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     map.insert(KeyboardKey::Insert, "\x1b[2~");
     map
 }
+
+pub fn start_rtinterpreter() -> (mpsc::Sender<KeyboardKey>, mpsc::Sender<bool>) {
+    let (keysender, keyreceiver) = mpsc::channel();
+    let (wordsender, wordreceiver) = mpsc::channel();
+    let (shutdown, gsd_receiver) = mpsc::channel();
+    let (buf1sd_sender, buf1sd_receiver) = mpsc::channel();
+    let (buf2sd_sender, buf2sd_receiver) = mpsc::channel();
+    let keymap = init_keymapper(); // Modified keymapper function
+    let buffer1 = Arc::new(Mutex::new(Vec::new()));
+    let buffer2 = Arc::new(Mutex::new(Vec::new()));
+
+    // Clone Arcs for threads
+    let buffer1_clone = Arc::clone(&buffer1);
+    let buffer2_clone = Arc::clone(&buffer2);
+
+    //Spawning buffer1 and buffer2 threads
+    let _buffer1_thread = thread::spawn(move || {
+        init_buffer1(keyreceiver, wordsender, buf1sd_receiver, buffer1_clone, &keymap);
+    });
+    let _buffer2_thread = thread::spawn(move || {
+        init_buffer2(wordreceiver, buf2sd_receiver, buffer2_clone);
+    });
+    //Spawn the Shutdown Thread
+    let _shutdown_thread = thread::spawn(move || {
+        rtinterpreter_shutdown(gsd_receiver, buf1sd_sender, buf2sd_sender);
+    });
+
+    (keysender, shutdown)
+}
+
+fn init_buffer1(
+    keyreceiver: mpsc::Receiver<KeyboardKey>,
+    wordsender: mpsc::Sender<String>,
+    shutdown: mpsc::Receiver<bool>,
+    buffer1: Arc<Mutex<Vec<String>>>,
+    keymap: &HashMap<KeyboardKey, &'static str>,
+) {
+    let mut buffer1_guard = buffer1.lock().unwrap(); // Acquire lock once
+
+    loop {
+        match keyreceiver.try_recv() {
+            Ok(key) => {
+                match key {
+                    KeyboardKey::Space | KeyboardKey::Period | KeyboardKey::Comma | KeyboardKey::Enter=> {
+                        if !buffer1_guard.is_empty() {
+                            if let Some(&key_str) = keymap.get(&key) {
+                                if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
+                                    eprintln!("Failed to print: {}", e);
+                                }
+                            }
+                            wordsender.send(buffer1_guard.drain(..).collect()).unwrap();
+                        }
+                    }
+                    _ => {
+                        if let Some(&key_str) = keymap.get(&key) {
+                            if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
+                                eprintln!("Failed to print: {}", e);
+                            }
+                            buffer1_guard.push(key_str.to_string());
+                        }
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+
+        if shutdown.try_recv() == Ok(true) {
+            println!("Buffer1 shutdown signal received");
+            break;
+        }
+    }
+}
+
+
+
+fn init_buffer2(
+    wordreceiver: mpsc::Receiver<String>,
+    shutdown: mpsc::Receiver<bool>,
+    buffer2: Arc<Mutex<Vec<String>>>,
+) {
+    let rwords = rwords_gen();
+    loop {
+        match wordreceiver.recv() {
+            Ok(word) => {
+                let mut buffer2_guard = buffer2.lock().unwrap();
+                buffer2_guard.push(word.to_string());
+
+                let mut violation: bool = false;
+
+                for rword in rwords.iter().filter(|&rword| word.contains(rword)) {
+                    violation = true;
+                    if let Err(_e) = execute!(
+                        std::io::stdout(),
+                        SetForegroundColor(Color::Red),
+                        Print(format!("\nRestricted word found: {}", rword)),
+                        ResetColor,
+                    ) {
+                        continue;
+                    }
+                    println!();
+                }
+
+                if violation {
+                    super::audiocontrol::init_censor();
+                }
+            }
+            Err(_) => println!("Error receiving word"), // Channel disconnected, exit loop
+        }
+
+        match shutdown.try_recv() {
+            Ok(true) => {
+                break;
+            }
+            Ok(false) | Err(_) => continue,
+        }
+    }
+}
+
 
 fn rwords_gen() -> HashSet<&'static str>{
     let mut words = HashSet::new();
