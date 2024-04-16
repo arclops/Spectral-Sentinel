@@ -22,7 +22,9 @@ pub fn gracefulshutdown(pswd: std::sync::mpsc::Sender<bool>) {
     let main_window = WindowDesc::new(build_root_widget(pswd))
         .title(WINDOW_TITLE)
         .window_size((400.0, 400.0))
-        .set_position(Point::new(center_x, center_y));
+        .set_position(Point::new(center_x, center_y))
+        .set_always_on_top(true)
+        .show_titlebar(true);
 
     // create the initial app state
     let initial_state = HelloState {

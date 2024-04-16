@@ -251,6 +251,7 @@ fn init_buffer2(
                         let _ = narrator.speak("Violations exceeded 3, Administrator has been notifed of the violations in this session");
                         if !email_sent {
                             send_email();
+                            email_sent = true;
                         }
                     } else {
                         super::audiocontrol::init_censor();
