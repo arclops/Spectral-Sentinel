@@ -1,10 +1,19 @@
 use std::{
-    collections::{HashMap, HashSet}, fs::File, io::{BufRead, BufReader}, sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread,
+    collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{Read, Write, BufRead, BufReader}, sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread,
     time::Duration,
+};
+use lettre::{
+    transport::smtp::authentication::Credentials,
+    Message, SmtpTransport, Transport,
+    message::{Attachment, MessageBuilder, MultiPart, SinglePart}
 };
 use tinyfiledialogs::open_file_dialog;
 use willhook::KeyboardKey;
 use crossterm::{execute, style::{Print, SetForegroundColor, Color, ResetColor}};
+use tts_rust::{ tts::GTTSClient, languages::Languages };
+use dotenv::dotenv;
+
+use super::filecreator;
 
 fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     let mut map = std::collections::HashMap::new();
@@ -36,29 +45,29 @@ fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     map.insert(KeyboardKey::Z, "z");
     map.insert(KeyboardKey::Space, " ");
     map.insert(KeyboardKey::Enter, "\n");
-    map.insert(KeyboardKey::BackSpace, "\x08");
+    map.insert(KeyboardKey::BackSpace, " BackSpace ");
     map.insert(KeyboardKey::Tab, "\t");
-    map.insert(KeyboardKey::Escape, "\x1b");
-    map.insert(KeyboardKey::Delete, "\x7f");
-    map.insert(KeyboardKey::ArrowLeft, "\x1b[D");
-    map.insert(KeyboardKey::ArrowRight, "\x1b[C");
-    map.insert(KeyboardKey::ArrowUp, "\x1b[A");
-    map.insert(KeyboardKey::ArrowDown, "\x1b[B");
-    map.insert(KeyboardKey::Home, "\x1bOH");
-    map.insert(KeyboardKey::PageUp, "\x1b[5~");
-    map.insert(KeyboardKey::PageDown, "\x1b[6~");
-    map.insert(KeyboardKey::F1, "\x1bOP");
-    map.insert(KeyboardKey::F2, "\x1bOQ");
-    map.insert(KeyboardKey::F3, "\x1bOR");
-    map.insert(KeyboardKey::F4, "\x1bOS");
-    map.insert(KeyboardKey::F5, "\x1b[15~");
-    map.insert(KeyboardKey::F6, "\x1b[17~");
-    map.insert(KeyboardKey::F7, "\x1b[18~");
-    map.insert(KeyboardKey::F8, "\x1b[19~");
-    map.insert(KeyboardKey::F9, "\x1b[20~");
-    map.insert(KeyboardKey::F10, "\x1b[21~");
-    map.insert(KeyboardKey::F11, "\x1b[23~");
-    map.insert(KeyboardKey::F12, "\x1b[24~");
+    map.insert(KeyboardKey::Escape, " Esc ");
+    map.insert(KeyboardKey::Delete, " Del ");
+    map.insert(KeyboardKey::ArrowLeft, " Left ");
+    map.insert(KeyboardKey::ArrowRight, " Right ");
+    map.insert(KeyboardKey::ArrowUp, " Up ");
+    map.insert(KeyboardKey::ArrowDown, " Down ");
+    map.insert(KeyboardKey::Home, " Home ");
+    map.insert(KeyboardKey::PageUp, " PgUp ");
+    map.insert(KeyboardKey::PageDown, " PgDown ");
+    map.insert(KeyboardKey::F1, "F1");
+    map.insert(KeyboardKey::F2, "F2");
+    map.insert(KeyboardKey::F3, "F3");
+    map.insert(KeyboardKey::F4, "F4");
+    map.insert(KeyboardKey::F5, "F5");
+    map.insert(KeyboardKey::F6, "F6");
+    map.insert(KeyboardKey::F7, "F7");
+    map.insert(KeyboardKey::F8, "F8");
+    map.insert(KeyboardKey::F9, "F9");
+    map.insert(KeyboardKey::F10, "F10");
+    map.insert(KeyboardKey::F11, "F11");
+    map.insert(KeyboardKey::F12, "F12");
     map.insert(KeyboardKey::Number0, "0");
     map.insert(KeyboardKey::Number1, "1");
     map.insert(KeyboardKey::Number2, "2");
@@ -69,6 +78,16 @@ fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     map.insert(KeyboardKey::Number7, "7");
     map.insert(KeyboardKey::Number8, "8");
     map.insert(KeyboardKey::Number9, "9");
+    map.insert(KeyboardKey::Numpad0, "0");
+    map.insert(KeyboardKey::Numpad1, "1");
+    map.insert(KeyboardKey::Numpad2, "2");
+    map.insert(KeyboardKey::Numpad3, "3");
+    map.insert(KeyboardKey::Numpad4, "4");
+    map.insert(KeyboardKey::Numpad5, "5");
+    map.insert(KeyboardKey::Numpad6, "6");
+    map.insert(KeyboardKey::Numpad7, "7");
+    map.insert(KeyboardKey::Numpad8, "8");
+    map.insert(KeyboardKey::Numpad9, "9");
     map.insert(KeyboardKey::Add, "+");
     map.insert(KeyboardKey::Multiply, "*");
     map.insert(KeyboardKey::Subtract, "-");
@@ -81,11 +100,13 @@ fn init_keymapper() -> HashMap<KeyboardKey, &'static str> {
     map.insert(KeyboardKey::Comma, ",");
     map.insert(KeyboardKey::Period, ".");
     map.insert(KeyboardKey::Slash, "/");
-    map.insert(KeyboardKey::CapsLock, "\x1b[?25h");
-    map.insert(KeyboardKey::ScrollLock, "\x1b[?45h");
-    map.insert(KeyboardKey::NumLock, "\x1b[?69h");
-    map.insert(KeyboardKey::PrintScreen, "\x1b[?47h");
-    map.insert(KeyboardKey::Insert, "\x1b[2~");
+    map.insert(KeyboardKey::CapsLock, " CapsLock ");
+    map.insert(KeyboardKey::ScrollLock, " ScrollLock ");
+    map.insert(KeyboardKey::NumLock, " NumLock ");
+    map.insert(KeyboardKey::PrintScreen, " PrintScreen ");
+    map.insert(KeyboardKey::Insert, " Insert ");
+    map.insert(KeyboardKey::LeftControl, " Ctrl ");
+    map.insert(KeyboardKey::RightControl, " Ctrl ");
     map
 }
 
@@ -98,6 +119,7 @@ pub fn start_rtinterpreter() -> (mpsc::Sender<KeyboardKey>, mpsc::Sender<bool>) 
     let keymap = init_keymapper(); // Modified keymapper function
     let buffer1 = Arc::new(Mutex::new(Vec::new()));
     let buffer2 = Arc::new(Mutex::new(Vec::new()));
+
 
     // Clone Arcs for threads
     let buffer1_clone = Arc::clone(&buffer1);
@@ -126,7 +148,18 @@ fn init_buffer1(
     keymap: &HashMap<KeyboardKey, &'static str>,
 ) {
     let mut buffer1_guard = buffer1.lock().unwrap(); // Acquire lock once
-
+    let path = filecreator::retrieve_idirectory().unwrap();
+    if !path.exists() {
+        if let Err(e) = fs::create_dir_all(&path) {
+            eprintln!("Error creating directory: {}", e);
+            panic!("{}",e);
+        }
+    }
+    let mut ifile = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // Truncate existing content
+        .open(path.join("rti_out.txt")).unwrap();
     loop {
         match keyreceiver.try_recv() {
             Ok(key) => {
@@ -134,18 +167,20 @@ fn init_buffer1(
                     KeyboardKey::Space | KeyboardKey::Period | KeyboardKey::Comma | KeyboardKey::Enter=> {
                         if !buffer1_guard.is_empty() {
                             if let Some(&key_str) = keymap.get(&key) {
-                                if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
-                                    eprintln!("Failed to print: {}", e);
-                                }
+                                // if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
+                                //     eprintln!("Failed to print: {}", e);
+                                // }
+                                let _ = &ifile.write(key_str.as_bytes()).unwrap();
                             }
                             wordsender.send(buffer1_guard.drain(..).collect()).unwrap();
                         }
                     }
                     _ => {
                         if let Some(&key_str) = keymap.get(&key) {
-                            if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
-                                eprintln!("Failed to print: {}", e);
-                            }
+                            // if let Err(e) = execute!(std::io::stdout(), Print(key_str)) {
+                            //     eprintln!("Failed to print: {}", e);
+                            // }
+                            let _ = &ifile.write(key_str.as_bytes()).unwrap();
                             buffer1_guard.push(key_str.to_string());
                         }
                     }
@@ -155,7 +190,7 @@ fn init_buffer1(
         }
 
         if shutdown.try_recv() == Ok(true) {
-            println!("Buffer1 shutdown signal received");
+            drop(ifile);
             break;
         }
     }
@@ -168,7 +203,26 @@ fn init_buffer2(
     shutdown: mpsc::Receiver<bool>,
     buffer2: Arc<Mutex<Vec<String>>>,
 ) {
+    let mut violations = 0;
+    let mut email_sent = false;
+    let narrator: GTTSClient = GTTSClient {
+        volume: 1.0, 
+        language: Languages::English, // use the Languages enum
+        tld: "com",
+    };
     let rwords = rwords_gen();
+    let path = filecreator::retrieve_rdirectory().unwrap();
+    if !path.exists() {
+        if let Err(e) = fs::create_dir_all(&path) {
+            eprintln!("Error creating directory: {}", e);
+            panic!("{}",e);
+        }
+    }
+    let mut rfile = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // Truncate existing content
+        .open(path.join("violations.txt")).unwrap();
     loop {
         match wordreceiver.recv() {
             Ok(word) => {
@@ -179,6 +233,7 @@ fn init_buffer2(
 
                 for rword in rwords.iter().filter(|&rword| word.contains(rword)) {
                     violation = true;
+                    violations += 1;
                     if let Err(_e) = execute!(
                         std::io::stdout(),
                         SetForegroundColor(Color::Red),
@@ -188,20 +243,26 @@ fn init_buffer2(
                         continue;
                     }
                     println!();
+                    let _ = &rfile.write(format!("{}\n", rword).as_bytes()).unwrap();
                 }
 
                 if violation {
-                    super::audiocontrol::init_censor();
+                    if violations >= 3{
+                        let _ = narrator.speak("Violations exceeded 3, Administrator has been notifed of the violations in this session");
+                        if !email_sent {
+                            send_email();
+                        }
+                    } else {
+                        super::audiocontrol::init_censor();
+                    }
                 }
             }
             Err(_) => println!("Error receiving word"), // Channel disconnected, exit loop
         }
 
-        match shutdown.try_recv() {
-            Ok(true) => {
-                break;
-            }
-            Ok(false) | Err(_) => continue,
+        if shutdown.try_recv() == Ok(true) {
+            drop(rfile);
+            break;
         }
     }
 }
@@ -254,6 +315,63 @@ fn rtinterpreter_shutdown(gsd: mpsc::Receiver<bool>, buf1sd: mpsc::Sender<bool>,
                 // Other errors or false received, continue the loop
                 continue;
             }
+        }
+    }
+}
+
+
+fn send_email(){
+    dotenv().ok();
+    let smtp_key: &str = &std::env::var("SMTP_KEY").expect("SMTP_KEY not set");
+    let from_email: &str = &std::env::var("SENDER").unwrap();
+    let to_email: &str = &std::env::var("TO").unwrap();
+    let host: &str = &std::env::var("HOST").unwrap();
+
+    let ifile_path = filecreator::retrieve_idirectory().unwrap().join("rti_out.txt");
+    let mut ifile = File::open(&ifile_path).expect("Failed to open interpreter output file");
+    let mut ifile_data = String::new();
+    ifile.read_to_string(&mut ifile_data).expect("Failed to read interpreter output file");
+
+    let rfile_path = filecreator::retrieve_rdirectory().unwrap().join("violations.txt");
+    let mut rfile = File::open(&rfile_path).expect("Failed to open interpreter output file");
+    let mut rfile_data = String::new();
+    rfile.read_to_string(&mut rfile_data).expect("Failed to read interpreter output file");
+
+    let ifile_size = fs::metadata(&ifile_path)
+    .map(|metadata| metadata.len() < 25 * 1024 * 1024)
+    .unwrap_or(false);
+    // println!("ifile status: {}", ifile_size);
+
+    let rfile_size = fs::metadata(&rfile_path)
+        .map(|metadata| metadata.len() < 25 * 1024 * 1024)
+        .unwrap_or(false);
+    // println!("rfile status: {}", rfile_size);
+    let emailbuild: MessageBuilder = Message::builder()
+        .from(from_email.parse().unwrap())
+        .to(to_email.parse().unwrap())
+        .subject("Spektra Violation Report");
+
+    let email: Message;
+
+    if ifile_size && rfile_size {
+        email = emailbuild.multipart(MultiPart::mixed()
+        .singlepart(SinglePart::plain(String::from(format!("There has been several violations in Computer {} of Lab {}\n", &std::env::var("COMPUTER").unwrap(), &std::env::var("LABNAME").unwrap()))))
+        .singlepart(SinglePart::plain(String::from("The outputs have been attached")))
+        .singlepart(Attachment::new("RTI.txt".parse().unwrap()).body(ifile_data, "text/plain".parse().unwrap()))
+        .singlepart(Attachment::new("Violations.txt".parse().unwrap()).body(rfile_data, "text/plain".parse().unwrap())))
+        .unwrap();
+        let creds: Credentials = Credentials::new(from_email.to_string(), smtp_key.to_string());
+
+        // Open a remote connection to gmail
+        let mailer: SmtpTransport = SmtpTransport::relay(&host)
+            .unwrap()
+            .credentials(creds)
+            .build();
+
+        // Send the email
+        match mailer.send(&email) {
+            Ok(_) => println!("Email sent successfully!"),
+            Err(e) => panic!("Could not send email: {:?}", e),
         }
     }
 }

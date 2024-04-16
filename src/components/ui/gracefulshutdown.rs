@@ -1,102 +1,82 @@
-// use std::{thread, sync::{mpsc, Arc, Mutex}, time::Duration};
-// use druid::{AppLauncher, Data, Lens, LocalizedString, Widget, WindowDesc, WidgetExt};
-// use druid::widget::{Button, Flex, CrossAxisAlignment, Label, TextBox, Align};
+use druid::widget::{Align, Flex, Label, TextBox, Button};
+use druid::{AppLauncher, Data, Env, Lens, LocalizedString, Widget, WidgetExt, WindowDesc};
+use druid::kurbo::Point;
 
-// const VERTICAL_WIDGET_SPACING: f64 = 15.0;
-// const TEXT_BOX_WIDTH: f64 = 250.0;
-// const WINDOW_TITLE: LocalizedString<AppState> = LocalizedString::new("Password Protection");
+const VERTICAL_WIDGET_SPACING: f64 = 20.0;
+const TEXT_BOX_WIDTH: f64 = 200.0;
+const WINDOW_TITLE: LocalizedString<HelloState> = LocalizedString::new("Spectra Console");
 
-// #[derive(Clone, Data, Lens)]
-// struct AppState {
-//     password: String,
-//     exit: bool
-// }
+#[derive(Clone, Data, Lens)]
+struct HelloState {
+    password: String,
+    correct_password: bool,
+}
 
-// pub fn exitui(sender: mpsc::Sender<()>) {
-//     let exit_condition = Arc::new(Mutex::new(false));
-//     let main_window = WindowDesc::new(build_root_widget(exit_condition.clone()))
-//         .title(WINDOW_TITLE)
-//         .window_size((400.0, 400.0));
+pub fn gracefulshutdown(pswd: std::sync::mpsc::Sender<bool>) {
+    let screen_size = druid::Screen::get_display_rect().size();
+    let window_size = (400.0, 400.0);
 
-//     let initial_state = AppState {
-//         password: String::new(),
-//         exit: false
-//     };
+    let center_x = (screen_size.width - window_size.0) / 2.0;
+    let center_y = (screen_size.height - window_size.1) / 2.0;
+    // describe the main window
+    let main_window = WindowDesc::new(build_root_widget(pswd))
+        .title(WINDOW_TITLE)
+        .window_size((400.0, 400.0))
+        .set_position(Point::new(center_x, center_y));
 
-//     let sender_clone = sender.clone();
+    // create the initial app state
+    let initial_state = HelloState {
+        password: "".into(),
+        correct_password: true
+    };
 
-//     AppLauncher::with_window(main_window)
-//         .launch(initial_state)
-//         .expect("Failed to launch application");
+    // start the application
+    AppLauncher::with_window(main_window)
+        .launch(initial_state)
+        .expect("Failed to launch application");
+}
 
-//     // After the UI is launched, spawn a thread to handle password checking
-//     thread::spawn(move || {
-//         // Keep checking if the exit condition is met or the password is correct
-//         loop {
-//             if *exit_condition.lock().unwrap() {
-//                 // Terminate all threads
-//                 if let Err(err) = sender_clone.send(()) {
-//                     eprintln!("Failed to send termination signal: {}", err);
-//                 }
-//                 break;
-//             }
-//             // Add additional checks or logic here if needed
-//             thread::sleep(Duration::from_secs(1));
-//         }
-//     });
-    
-// }
+fn build_root_widget(pswd: std::sync::mpsc::Sender<bool>) -> impl Widget<HelloState> {
+    // a label that will determine its text based on the current app data.
+    let label = Label::new(|data: &HelloState, _env: &Env| {
+        if data.correct_password {
+            format!(
+                "Hello {:?}!\nEnter the passphrase to exit!",
+                std::env::var("USERPROFILE").unwrap().split("\\").last().unwrap_or_default()
+            )
+        } else {
+            "Wrong Password!".into()
+        }
+    });    // a textbox that modifies `password`.
+    let textbox = TextBox::new()
+        .with_placeholder("Enter password here")
+        .fix_width(TEXT_BOX_WIDTH)
+        .lens(HelloState::password);
 
-// fn build_root_widget(exit_condition: Arc<Mutex<bool>>) -> impl Widget<AppState> {
-//     let instruction_label = Label::new("Enter the password to terminate:");
-//     let password_textbox = TextBox::new()
-//         .with_placeholder("Enter the password")
-//         .fix_width(TEXT_BOX_WIDTH)
-//         .lens(AppState::password);
+    let button = Button::new("Shutdown")
+    .on_click(move |_ctx, data: &mut HelloState, _env| {
+        let text = data.password.clone(); // Clone the text from the state
+        if text == "Hehe" {
+            // Request the application to quit
+            _ctx.submit_command(druid::commands::CLOSE_WINDOW);
+            pswd.send(true).unwrap();
+        }
+        else {
+            // Update state to indicate incorrect password
+            data.correct_password = false;
+            // Force widget to recompute
+            _ctx.request_paint();
+        }
+    });
 
-//     let ok_button = Button::new("Ok").on_click(move |_ctx, data: &mut AppState, _env| {
-//         // Spawn a new thread for password checking
-//         let data_password = data.password.clone();
-//         let exit_condition_clone = exit_condition.clone();
-//         thread::spawn(move || {
-//             if data_password == "Admin@123" {
-//                 println!("Password matched. Exiting.");
-//                 *exit_condition_clone.lock().unwrap() = true;
-//             } else {
-//                 // Replace the println! statement with the error dialog function
-//                 show_error_dialog("Incorrect password. Please try again.");
-//             }
-//         });
-//     });
+    // arrange the two widgets vertically, with some padding
+    let layout = Flex::column()
+        .with_child(label)
+        .with_spacer(VERTICAL_WIDGET_SPACING)
+        .with_child(textbox)
+        .with_spacer(10.0)
+        .with_child(button);
 
-//     let cancel_button = Button::new("Cancel").on_click(|_ctx, _data: &mut AppState, _env| {
-//         println!("Cancelled. Exiting.");
-//         return
-//     });
-
-//     // Group widgets and center both horizontally and vertically using Align
-//     let layout = Align::centered(
-//         Flex::column()
-//             .cross_axis_alignment(CrossAxisAlignment::Center)
-//             .with_child(instruction_label)
-//             .with_spacer(VERTICAL_WIDGET_SPACING)
-//             .with_child(password_textbox)
-//             .with_spacer(VERTICAL_WIDGET_SPACING)
-//             .with_child(
-//                 Flex::row()
-//                     .cross_axis_alignment(CrossAxisAlignment::Center)
-//                     .with_child(ok_button)
-//                     .with_spacer(20.0)
-//                     .with_child(cancel_button),
-//             ),
-//     );
-
-//     layout
-// }
-
-// // Function to show an error dialog using druid
-// fn show_error_dialog(message: &str) {
-//     // In a real application, you would use druid's dialog API to create and show an error dialog.
-//     // For simplicity, this example just prints the error message.
-//     println!("Error: {}", message);
-// }
+    // center the two widgets in the available space
+    Align::centered(layout)
+}

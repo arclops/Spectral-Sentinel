@@ -16,3 +16,6 @@ tokio = { version = "1.36.0", features = ["full"] }
 willhook = "0.6.3"
 winapi = {version = "0.3.9", features = ["mmdeviceapi","endpointvolume","combaseapi","winerror"] }
 rodio = "0.17.3"
+tts_rust = "0.3.5"
+dotenv = "0.15.0"
+lettre = "0.11.6"
