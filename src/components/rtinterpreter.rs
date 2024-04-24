@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{Read, Write, BufRead, BufReader}, sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread,
-    time::Duration,
+    collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{self, BufRead, BufReader, Read, Write}, process::{Command, Stdio}, sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread, time::Duration
 };
 use lettre::{
     transport::smtp::authentication::Credentials,
@@ -234,6 +233,8 @@ fn init_buffer2(
                 for rword in rwords.iter().filter(|&rword| word.contains(rword)) {
                     violation = true;
                     violations += 1;
+                    let _ = &rfile.write(format!("{}\n", rword).as_bytes()).unwrap();
+                    super::audiocontrol::init_censor(&rword);
                     if let Err(_e) = execute!(
                         std::io::stdout(),
                         SetForegroundColor(Color::Red),
@@ -242,19 +243,16 @@ fn init_buffer2(
                     ) {
                         continue;
                     }
-                    println!();
-                    let _ = &rfile.write(format!("{}\n", rword).as_bytes()).unwrap();
+                    println!();                    
                 }
 
                 if violation {
                     if violations >= 3{
-                        let _ = narrator.speak("Violations exceeded 3, Administrator has been notifed of the violations in this session");
+                        super::audiocontrol::violation_notification(&narrator);
                         if !email_sent {
                             send_email();
                             email_sent = true;
                         }
-                    } else {
-                        super::audiocontrol::init_censor();
                     }
                 }
             }
@@ -327,6 +325,7 @@ fn send_email(){
     let from_email: &str = &std::env::var("SENDER").unwrap();
     let to_email: &str = &std::env::var("TO").unwrap();
     let host: &str = &std::env::var("HOST").unwrap();
+    let mac = get_mac().unwrap();
 
     let ifile_path = filecreator::retrieve_idirectory().unwrap().join("rti_out.txt");
     let mut ifile = File::open(&ifile_path).expect("Failed to open interpreter output file");
@@ -356,7 +355,9 @@ fn send_email(){
 
     if ifile_size && rfile_size {
         email = emailbuild.multipart(MultiPart::mixed()
-        .singlepart(SinglePart::plain(String::from(format!("There has been several violations in Computer {} of Lab {}\n", &std::env::var("COMPUTER").unwrap(), &std::env::var("LABNAME").unwrap()))))
+        .singlepart(SinglePart::plain(String::from(format!("There has been several violations in Computer {} of Lab {} with MAC Address: {:?}\n", &std::env::var("COMPUTER").unwrap(), &std::env::var("LABNAME").unwrap(), mac))))
+        .singlepart(SinglePart::plain(String::from("The MAC Address can be verified by running the following command in PowerShell:")))
+        .singlepart(SinglePart::plain(String::from("Get-NetAdapter | Where-Object { $_.Name -like '*Ethernet*' } | Select-Object -First 1 -ExpandProperty MacAddress")))
         .singlepart(SinglePart::plain(String::from("The outputs have been attached")))
         .singlepart(Attachment::new("RTI.txt".parse().unwrap()).body(ifile_data, "text/plain".parse().unwrap()))
         .singlepart(Attachment::new("Violations.txt".parse().unwrap()).body(rfile_data, "text/plain".parse().unwrap())))
@@ -375,4 +376,23 @@ fn send_email(){
             Err(e) => panic!("Could not send email: {:?}", e),
         }
     }
+}
+
+fn get_mac () -> io::Result<String> {
+    // Spawn PowerShell process with the command to get MAC address of the first Ethernet adapter
+    let output = Command::new("powershell")
+        .arg("-Command")
+        .arg("Get-NetAdapter | Where-Object { $_.Name -like '*Ethernet*' } | Select-Object -First 1 -ExpandProperty MacAddress")
+        .stdout(Stdio::piped())
+        .output()?;
+    
+    // Check if PowerShell command executed successfully
+    if output.status.success() {
+        // Convert the output bytes to a string
+        let output_str = String::from_utf8(output.stdout).unwrap();
+        let mac = output_str.trim();
+        return Ok(mac.parse().unwrap());
+    }
+
+    Ok("".parse().unwrap())
 }

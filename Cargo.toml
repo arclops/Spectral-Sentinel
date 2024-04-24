@@ -19,3 +19,10 @@ rodio = "0.17.3"
 tts_rust = "0.3.5"
 dotenv = "0.15.0"
 lettre = "0.11.6"
+
+[[bin]]
+name = "spektra"
+path = "src/main.rs"
+
+[build-dependencies]
+winres = "0.1.12"

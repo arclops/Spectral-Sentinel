@@ -8,27 +8,30 @@ use winapi::{
     Interface,
 };
 use std::{
-    sync::mpsc,
-    time::Duration,
-    thread,
+    sync::mpsc, thread, time::Duration
 };
 use rodio::{
     OutputStream, Sink,
-    source::{SineWave, Source},
 };
+use tts_rust::{ tts::GTTSClient, languages::Languages };
 
-pub fn init_censor() {
+pub fn init_censor(rword_orig: &str) {
     let (audio_control_sender, audio_control_receiver) = mpsc::channel();
     let (audio_stop_sender, audio_stop_receiver) = mpsc::channel();
-
+    let narrator: GTTSClient = GTTSClient {
+        volume: 1.0, 
+        language: Languages::English, // use the Languages enum
+        tld: "com",
+    };
     // Spawn thread for audio manipulation
     let audio_control_thread = thread::spawn(move || {
         manipulate_audio(audio_control_receiver, audio_stop_receiver);
     });
-
+    let rword= String::from(rword_orig);
+    
     // Spawn thread for playing sound
     let audio_play_thread = thread::spawn(move || {
-        play_sound(audio_control_sender);
+        play_sound(audio_control_sender, rword, &narrator);
     });
 
     // Wait for the audio playback to complete
@@ -118,12 +121,12 @@ fn manipulate_audio(_control_receiver: mpsc::Receiver<()>, stop_receiver: mpsc::
     }
 }
 
-fn play_sound(control_sender: mpsc::Sender<()>) {
+fn play_sound(control_sender: mpsc::Sender<()>, rword: String, narrator: &GTTSClient) {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
     
     // Add a dummy source for the sake of the example.
-    gen_melody(&sink);
+    gen_melody(narrator, rword);
     
     // The sound plays in a separate thread. This call will block the current thread until the sink
     // has finished playing all its queued sounds.
@@ -133,14 +136,21 @@ fn play_sound(control_sender: mpsc::Sender<()>) {
     control_sender.send(()).unwrap();
 }
 
-fn gen_melody(sink: &Sink) {
-    let mut source = SineWave::new(440.0).take_duration(Duration::from_secs_f32(1.0)).amplify(30.0);
-    sink.append(source);
-    let frequencies = [261.3, 293.66, 329.63, 261.63, 329.63, 349.23, 329.63, 293.66, 261.63];
-    for &freq in frequencies.iter() {
-        source = SineWave::new(freq)
-            .take_duration(Duration::from_secs_f32(0.5))
-            .amplify(30.0);
-        sink.append(source);
-    }
+fn gen_melody(narrator: &GTTSClient, rword: String) {
+    // let mut source = SineWave::new(440.0).take_duration(Duration::from_secs_f32(1.0)).amplify(30.0);
+    // sink.append(source);
+    // let frequencies = [261.3, 293.66, 329.63, 261.63, 329.63, 349.23, 329.63, 293.66, 261.63];
+    // for &freq in frequencies.iter() {
+    //     source = SineWave::new(freq)
+    //         .take_duration(Duration::from_secs_f32(0.5))
+    //         .amplify(30.0);
+    //     sink.append(source);
+    // }
+    let _ = narrator.speak(format!("Restricted keyword found: {:?}",rword).as_str());
 }
+
+pub fn violation_notification(narrator: &GTTSClient) {
+    let _ = narrator.speak("Violations exceeded 3, Administrator has been notified of the violations in this session");
+}
+
+//let _ = narrator.speak(format!("Restricted keyword found: {:?}",rword).as_str());
