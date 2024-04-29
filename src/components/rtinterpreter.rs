@@ -1,5 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{self, BufRead, BufReader, Read, Write}, process::{Command, Stdio}, sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread, time::Duration
+    collections::{HashMap, HashSet}, fs::{self, File, OpenOptions},
+    io::{self, BufRead, BufReader, Read, Write}, process::{Command, Stdio}, 
+    sync::{mpsc::{self, TryRecvError},Arc, Mutex}, thread, time::Duration,
+    path::Path, env
 };
 use lettre::{
     transport::smtp::authentication::Credentials,
@@ -9,7 +12,7 @@ use lettre::{
 use tinyfiledialogs::open_file_dialog;
 use willhook::KeyboardKey;
 use crossterm::{execute, style::{Print, SetForegroundColor, Color, ResetColor}};
-use tts_rust::{ tts::GTTSClient, languages::Languages };
+// use tts_rust::{ tts::GTTSClient, languages::Languages };
 use dotenv::dotenv;
 
 use super::filecreator;
@@ -204,11 +207,6 @@ fn init_buffer2(
 ) {
     let mut violations = 0;
     let mut email_sent = false;
-    let narrator: GTTSClient = GTTSClient {
-        volume: 1.0, 
-        language: Languages::English, // use the Languages enum
-        tld: "com",
-    };
     let rwords = rwords_gen();
     let path = filecreator::retrieve_rdirectory().unwrap();
     if !path.exists() {
@@ -234,7 +232,7 @@ fn init_buffer2(
                     violation = true;
                     violations += 1;
                     let _ = &rfile.write(format!("{}\n", rword).as_bytes()).unwrap();
-                    super::audiocontrol::init_censor(&rword);
+                    super::audiocontrol::init_censor(&rword, 1);
                     if let Err(_e) = execute!(
                         std::io::stdout(),
                         SetForegroundColor(Color::Red),
@@ -248,7 +246,7 @@ fn init_buffer2(
 
                 if violation {
                     if violations >= 3{
-                        super::audiocontrol::violation_notification(&narrator);
+                        super::audiocontrol::init_censor("Violations exceeded 3, Administrator has been notified of the violations in this session", 0);
                         if !email_sent {
                             send_email();
                             email_sent = true;
@@ -269,29 +267,50 @@ fn init_buffer2(
 
 fn rwords_gen() -> HashSet<&'static str>{
     let mut words = HashSet::new();
+    dotenv().ok();
+    if env::var("RKF").is_err() || env::var("RKF").unwrap() == "".to_string() {
+        // Using the tinyfiledialogs library to select a text file
+        let dir = 
+        match open_file_dialog("Select the text file containing restricted keywords", "", Some((&["*.txt"], "Text files"))) {
+            Some(file_path) => file_path,
+            _ => {
+                super::audiocontrol::init_censor("No list of words provided, proceeding with an empty list.",0);
+                "".to_string()
+            }
+        };
+        if dir != "" {
+            let rwords_file = File::open(&dir).unwrap();
 
-    // Using the tinyfiledialogs library to select a text file
-    let dir = 
-    match open_file_dialog("Select the text file containing restricted keywords", "", Some((&["*.txt"], "Text files"))) {
-        Some(file_path) => file_path,
-        _ => {
-            println!("No list of words provided, proceeding with an empty list.");
-            "".to_string()
-        }
-    };
-    if dir != "" {
-        let rwords_file = File::open(dir).unwrap();
-
-        // Populate HashSet with words from text file using a BufferedReader
-        for line in BufReader::new(rwords_file).lines() {
-            if let Ok(word) = line {
-                // Convert the String into a &'static str and insert into the HashSet
-                words.insert(Box::leak(word.into_boxed_str()) as &'static str);
-            } else {
-                continue
+            // Populate HashSet with words from text file using a BufferedReader
+            for line in BufReader::new(rwords_file).lines() {
+                if let Ok(word) = line {
+                    // Convert the String into a &'static str and insert into the HashSet
+                    words.insert(Box::leak(word.into_boxed_str()) as &'static str);
+                } else {
+                    continue
+                }
             }
         }
+        let _ = persistence("RKF".parse().unwrap(), &dir.escape_default().to_string());
+    } else if let Ok(dir) = env::var("RKF") {
+        if dir != "" {
+            let rwords_file = File::open(&dir).unwrap();
+
+            // Populate HashSet with words from text file using a BufferedReader
+            for line in BufReader::new(rwords_file).lines() {
+                if let Ok(word) = line {
+                    // Convert the String into a &'static str and insert into the HashSet
+                    words.insert(Box::leak(word.into_boxed_str()) as &'static str);
+                } else {
+                    continue
+                }
+            }
+            let _ = persistence("RKF".parse().unwrap(), &dir.escape_default().to_string());
+        } else {
+            super::audiocontrol::init_censor("No list of words provided, proceeding with an empty list.",0);
+        }
     }
+    super::audiocontrol::init_censor("Spektra Online", 0);
 
     // Return HashSet
     words
@@ -355,7 +374,7 @@ fn send_email(){
 
     if ifile_size && rfile_size {
         email = emailbuild.multipart(MultiPart::mixed()
-        .singlepart(SinglePart::plain(String::from(format!("There has been several violations in Computer {} of Lab {} with MAC Address: {:?}\n", &std::env::var("COMPUTER").unwrap(), &std::env::var("LABNAME").unwrap(), mac))))
+        .singlepart(SinglePart::plain(String::from(format!("There has been several violations in Computer with ID {} with MAC Address: {:?}\n", &std::env::var("ID").unwrap(), mac))))
         .singlepart(SinglePart::plain(String::from("The MAC Address can be verified by running the following command in PowerShell:")))
         .singlepart(SinglePart::plain(String::from("Get-NetAdapter | Where-Object { $_.Name -like '*Ethernet*' } | Select-Object -First 1 -ExpandProperty MacAddress")))
         .singlepart(SinglePart::plain(String::from("The outputs have been attached")))
@@ -395,4 +414,30 @@ fn get_mac () -> io::Result<String> {
     }
 
     Ok("".parse().unwrap())
+}
+
+pub fn persistence(mut var: String, val: &str) -> Result<(), io::Error> {
+    let contents = fs::read_to_string(Path::new(".env")).expect("Failed to read .env file");
+    let _ = var.push('=');
+    let mut varstat = false;
+    // Split the contents by lines
+    let mut updated_contents = String::new();
+    for line in contents.lines() {
+        if line.starts_with(&var) {
+            // Change the value of the variable
+            let updated_line = format!("{}{}\n", var, val);
+            varstat = true;
+            updated_contents.push_str(&updated_line);
+        } else {
+            updated_contents.push_str(&format!("{}\n", line));
+        }
+    }
+    if !varstat {
+        let updated_line = format!("{}{}\n", var, val);
+        updated_contents.push_str(&updated_line);
+    }
+
+    // Write the updated contents back to the .env file
+    let _ = fs::write(".env", updated_contents);
+    Ok(())
 }

